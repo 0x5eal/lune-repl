@@ -8,11 +8,11 @@ use std::{
 
 use anyhow::Error;
 use clap::Command;
-use regex::Regex;
 use lune::lua::stdio::formatting::{pretty_format_luau_error, pretty_format_value};
 use lune::Lune;
 use mlua::ExternalError;
 use once_cell::sync::Lazy;
+use regex::Regex;
 use rustyline::{error::ReadlineError, history::FileHistory, DefaultEditor, Editor};
 
 fn env_var_bool(value: String) -> Option<bool> {
@@ -77,7 +77,7 @@ pub async fn show_interface(cmd: Command) -> Result<ExitCode, Error> {
             !env_var_bool(no_color).unwrap_or_else(|| false)
         }
     });
-    
+
     const VARIABLE_DECLARATION_PAT: &str = r#"(local)?\s*(.*)\s*(=)\s*(.*)\s*"#;
 
     // HACK: Prepend this "context" to the source code provided,
@@ -130,16 +130,34 @@ pub async fn show_interface(cmd: Command) -> Result<ExitCode, Error> {
 
         let eval_result = lune_instance.run("REPL", source_code.clone()).await;
 
+
+        // Lemme just talk to myself rq.
+        // We have a table "tbl". The table may have nested k, v.
+        // We need to prettify this into a HashMap or something to convert
+        // that into a lua table.
         match eval_result {
             Ok(_) => {
                 if Regex::new(VARIABLE_DECLARATION_PAT)?.is_match(&source_code)
                     && !&source_code.contains("\n")
                 {
-                    let declaration = source_code.split("=").collect::<Vec<&str>>()[1]
+                    let mut declaration = source_code.splitn(2, "=").collect::<Vec<&str>>()[1]
                         .trim()
-                        .replace("\"", "");
+                        .to_string();
+
+                    let starts_string = declaration.starts_with("\"") || declaration.starts_with("'");
+                    let ends_string = declaration.ends_with("\"") || declaration.ends_with("'");
+
+                    if starts_string && ends_string {
+                        declaration = declaration[1..declaration.len() - 1].to_string();
+                    } else {
+                        // How the fuck do you get the value this returns? Cuz run() only returns
+                        // the exitcode and error...
+                        Lune::new().run("REPL_INTERNAL", "require('@lune/luau').load('return { [\"hello\"] = \"world\" }')()").await?;
+                    }
 
                     let mut formatted_output = String::new();
+
+                    // FIX: table support, convert input to hashmap, then to lua value
                     pretty_format_value(
                         &mut formatted_output,
                         &mlua::IntoLua::into_lua(declaration, &mlua::Lua::new())?,
